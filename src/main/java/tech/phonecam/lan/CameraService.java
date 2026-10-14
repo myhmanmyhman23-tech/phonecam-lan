@@ -87,6 +87,8 @@ public class CameraService extends Service {
                 server.publish(jpeg); status = "Камера работает · " + size.getWidth() + "×" + size.getHeight() + " · до 10 кадров/с";
             } catch (Exception e) { if (!stopped) fail("Ошибка кадра: " + e.getMessage()); }
         }, handler);
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)
+            throw new SecurityException("Разрешение камеры отозвано");
         manager.openCamera(selected, new CameraDevice.StateCallback() {
             @Override public void onOpened(CameraDevice device) {
                 if (stopped) { device.close(); return; }
