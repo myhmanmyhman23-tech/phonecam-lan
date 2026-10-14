@@ -14,12 +14,18 @@ import java.security.SecureRandom;
 
 public class MainActivity extends Activity {
     private TextView status, address;
+    private RadioButton front, rear;
+    private Button start;
+    private boolean pendingStart;
     private String token;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
             status.setText(CameraService.status);
             address.setText(url());
+            front.setEnabled(!CameraService.running);
+            rear.setEnabled(!CameraService.running);
+            start.setEnabled(!CameraService.running);
             ui.postDelayed(this, 1000);
         }
     };
@@ -36,33 +42,51 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL); box.setPadding(32, 48, 32, 24);
         box.setBackgroundColor(Color.rgb(240, 244, 248));
-        setContentView(box);
+        ScrollView scroll = new ScrollView(this); scroll.addView(box); setContentView(scroll);
         TextView title = new TextView(this); title.setText("PhoneCam LAN"); title.setTextSize(28); box.addView(title);
         TextView help = new TextView(this);
         help.setText("Телефон и ПК — в одном Wi-Fi. Нажми «Начать», дождись статуса камеры, затем блокируй экран.\n\nВ OBS: Медиаисточник → отключить «Локальный файл» → вставить ссылку → формат mpjpeg. Затем «Запустить виртуальную камеру».\n\nСсылка даёт доступ к видео. Не публикуй её. HTTP предназначен только для доверенного домашнего Wi-Fi.");
         help.setTextSize(16); box.addView(help);
         status = new TextView(this); status.setTextSize(18); box.addView(status);
+        TextView cameraHelp = new TextView(this);
+        cameraHelp.setText("Выбери камеру. Для смены во время трансляции: останови, выбери другую и снова нажми «Начать». Ссылка OBS не изменится.");
+        box.addView(cameraHelp);
+        RadioGroup cameras = new RadioGroup(this); cameras.setOrientation(RadioGroup.HORIZONTAL);
+        front = new RadioButton(this); front.setId(View.generateViewId()); front.setText("Передняя"); cameras.addView(front);
+        rear = new RadioButton(this); rear.setId(View.generateViewId()); rear.setText("Задняя"); cameras.addView(rear);
+        cameras.check(getPreferences(0).getBoolean("front", true) ? front.getId() : rear.getId());
+        cameras.setOnCheckedChangeListener((group, checked) -> getPreferences(0).edit().putBoolean("front", checked == front.getId()).apply());
+        box.addView(cameras);
         address = new TextView(this); address.setTextIsSelectable(true); box.addView(address);
         Button copy = new Button(this); copy.setText("Скопировать ссылку OBS"); box.addView(copy);
         copy.setOnClickListener(v -> {
             ((ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("PhoneCam", url()));
             Toast.makeText(this, "Ссылка скопирована", Toast.LENGTH_SHORT).show();
         });
-        Button start = new Button(this); start.setText("Начать трансляцию"); box.addView(start);
-        start.setOnClickListener(v -> {
+        start = new Button(this); start.setText("Начать трансляцию"); box.addView(start);
+        start.setOnClickListener(v -> beginStream());
+        Button stop = new Button(this); stop.setText("Остановить"); box.addView(stop);
+        stop.setOnClickListener(v -> stopService(new Intent(this, CameraService.class)));
+        TextView note = new TextView(this);
+        note.setText("Передняя или задняя камера, около 640×480, до 10 кадров/с, без звука. На Redmi/MIUI может понадобиться режим батареи «Без ограничений». После ошибки камеры разблокируй телефон и запусти снова."); box.addView(note);
+    }
+    private void beginStream() {
             if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                pendingStart = true;
                 requestPermissions(new String[]{Manifest.permission.CAMERA}, 1); return;
             }
             if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 2);
             if (wifiAddress() == null) { Toast.makeText(this, "Подключи телефон к Wi-Fi", Toast.LENGTH_LONG).show(); return; }
-            try { startForegroundService(new Intent(this, CameraService.class).putExtra("token", token).putExtra("bind", wifiAddress())); }
-            catch (RuntimeException e) { status.setText("Не удалось запустить: " + e.getMessage()); }
-        });
-        Button stop = new Button(this); stop.setText("Остановить"); box.addView(stop);
-        stop.setOnClickListener(v -> stopService(new Intent(this, CameraService.class)));
-        TextView note = new TextView(this);
-        note.setText("Первая версия: задняя камера, около 640×480, до 10 кадров/с, без звука. На Redmi/MIUI может понадобиться режим батареи «Без ограничений». После ошибки камеры разблокируй телефон и запусти снова."); box.addView(note);
+            try { startForegroundService(new Intent(this, CameraService.class).putExtra("token", token).putExtra("bind", wifiAddress()).putExtra("front", front.isChecked())); }
+            catch (RuntimeException e) { CameraService.status = "Не удалось запустить: " + e.getMessage(); }
+    }
+    @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(request, permissions, results);
+        if (request == 1 && pendingStart) {
+            pendingStart = false;
+            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) beginStream();
+        }
     }
     private String wifiAddress() {
         ConnectivityManager manager = (ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);

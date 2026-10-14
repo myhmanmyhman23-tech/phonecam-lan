@@ -16,6 +16,7 @@ import java.util.*;
 
 public class CameraService extends Service {
     public static volatile String status = "Трансляция остановлена";
+    public static volatile boolean running;
     private HandlerThread worker;
     private Handler handler;
     private MjpegServer server;
@@ -25,12 +26,15 @@ public class CameraService extends Service {
     private PowerManager.WakeLock wake;
     private volatile boolean stopped;
     private int orientation;
+    private boolean frontCamera;
     private long lastFrame;
     @Override public IBinder onBind(Intent intent) { return null; }
     @Override public int onStartCommand(Intent intent, int flags, int id) {
         if (intent == null || "stop".equals(intent.getAction())) { stopSelf(); return START_NOT_STICKY; }
         if (worker != null) return START_NOT_STICKY;
         try {
+            running = true;
+            frontCamera = intent.getBooleanExtra("front", true);
             NotificationManager notifications = getSystemService(NotificationManager.class);
             notifications.createNotificationChannel(new NotificationChannel("camera", "Трансляция камеры", NotificationManager.IMPORTANCE_LOW));
             PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
@@ -59,10 +63,13 @@ public class CameraService extends Service {
         String selected = null;
         for (String id : manager.getCameraIdList()) {
             Integer facing = manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING);
-            if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) { selected = id; break; }
+            int wanted = frontCamera ? CameraCharacteristics.LENS_FACING_FRONT : CameraCharacteristics.LENS_FACING_BACK;
+            if (facing != null && facing == wanted) { selected = id; break; }
         }
-        if (selected == null) throw new IllegalStateException("Задняя камера не найдена");
+        if (selected == null) throw new IllegalStateException((frontCamera ? "Передняя" : "Задняя") + " камера не найдена");
         CameraCharacteristics info = manager.getCameraCharacteristics(selected);
+        int[] focusModes = info.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES);
+        boolean continuousFocus = focusModes != null && Arrays.stream(focusModes).anyMatch(mode -> mode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
         Integer angle = info.get(CameraCharacteristics.SENSOR_ORIENTATION); orientation = angle == null ? 0 : angle;
         Size[] sizes = info.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP).getOutputSizes(ImageFormat.YUV_420_888);
         if (sizes == null || sizes.length == 0) throw new IllegalStateException("Нет формата YUV");
@@ -84,7 +91,7 @@ public class CameraService extends Service {
                     buffer.reset(); rotated.compress(Bitmap.CompressFormat.JPEG, 70, buffer); jpeg = buffer.toByteArray();
                     if (rotated != original) rotated.recycle(); original.recycle();
                 }
-                server.publish(jpeg); status = "Камера работает · " + size.getWidth() + "×" + size.getHeight() + " · до 10 кадров/с";
+                server.publish(jpeg); status = (frontCamera ? "Передняя" : "Задняя") + " камера работает · " + size.getWidth() + "×" + size.getHeight() + " · до 10 кадров/с";
             } catch (Exception e) { if (!stopped) fail("Ошибка кадра: " + e.getMessage()); }
         }, handler);
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)
@@ -101,7 +108,7 @@ public class CameraService extends Service {
                             try {
                                 CaptureRequest.Builder request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                                 request.addTarget(reader.getSurface());
-                                request.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
+                                if (continuousFocus) request.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
                                 capture.setRepeatingRequest(request.build(), null, handler);
                             } catch (Exception e) { fail(e.getMessage()); }
                         }
@@ -129,6 +136,7 @@ public class CameraService extends Service {
     private void fail(String reason) { status = "Остановлено: " + reason; new Handler(Looper.getMainLooper()).post(this::stopSelf); }
     @Override public void onDestroy() {
         stopped = true;
+        running = false;
         if (server != null) server.close();
         if (handler != null) {
             handler.removeCallbacksAndMessages(null);

@@ -40,9 +40,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v0.1.0-build-${{ github.run_number }}" build/outputs/apk/debug/*.apk \
+          gh release create "v0.2.0-build-${{ github.run_number }}" build/outputs/apk/debug/*.apk \
             --target "$GITHUB_SHA" --title "PhoneCam LAN test build ${{ github.run_number }}" \
-            --notes "Test APK for Android 8+. See README for OBS setup. Screen-off camera behavior still needs testing on your phone." --prerelease
+            --notes "Front and rear camera selection. Stop the stream, select a camera, then start again; the OBS URL stays the same. Front camera is the default. If Android rejects the update due to signing, uninstall the previous test APK first and copy the new URL into OBS." --prerelease
       - uses: actions/upload-artifact@v4
         if: always()
         with:
