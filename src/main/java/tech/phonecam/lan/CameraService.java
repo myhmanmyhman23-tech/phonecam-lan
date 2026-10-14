@@ -47,6 +47,8 @@ public class CameraService extends Service {
             if (Build.VERSION.SDK_INT >= 29) startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
             else startForeground(1, notification);
             if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) throw new SecurityException("Нет разрешения камеры");
+            if (Build.VERSION.SDK_INT >= 37 && checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED)
+                throw new SecurityException("Нет разрешения на локальную сеть");
             status = "Подключение камеры…";
             wake = ((PowerManager)getSystemService(POWER_SERVICE)).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "phonecam:stream");
             wake.acquire(4 * 60 * 60 * 1000L);

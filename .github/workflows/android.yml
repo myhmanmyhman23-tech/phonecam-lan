@@ -17,10 +17,10 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          packages: 'platform-tools platforms;android-37 build-tools;37.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.11.1'
+          gradle-version: '9.3.1'
       - name: Install decoder for stream compatibility check
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Test stream protocol and FFmpeg decoder
@@ -28,23 +28,42 @@ jobs:
           mkdir -p /tmp/phonecam-tests
           javac -d /tmp/phonecam-tests src/main/java/tech/phonecam/lan/MjpegServer.java tests/ServerTest.java
           java -cp /tmp/phonecam-tests tech.phonecam.lan.ServerTest ffmpeg
+      - name: Restore release signing key
+        env:
+          SIGNING_KEY: ${{ secrets.PHONECAM_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$SIGNING_KEY"
+          printf '%s' "$SIGNING_KEY" | base64 --decode > "$RUNNER_TEMP/phonecam-release.p12"
+          chmod 600 "$RUNNER_TEMP/phonecam-release.p12"
       - name: Build and lint Android app
-        run: gradle assembleDebug lintDebug --no-daemon
+        env:
+          PHONECAM_KEYSTORE: ${{ runner.temp }}/phonecam-release.p12
+          PHONECAM_STORE_PASSWORD: ${{ secrets.PHONECAM_STORE_PASSWORD }}
+        run: gradle assembleRelease lintRelease --no-daemon
+      - name: Verify and package public APK
+        run: |
+          mkdir -p dist
+          cp build/outputs/apk/release/*-release.apk dist/PhoneCam-LAN.apk
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs dist/PhoneCam-LAN.apk
+          test "$(apkanalyzer manifest min-sdk dist/PhoneCam-LAN.apk)" = "29"
+          test "$(apkanalyzer manifest target-sdk dist/PhoneCam-LAN.apk)" = "37"
+          cd dist
+          sha256sum PhoneCam-LAN.apk > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: PhoneCam-LAN-APK
-          path: build/outputs/apk/debug/*.apk
+          path: dist/*
           if-no-files-found: error
           retention-days: 30
       - name: Publish downloadable APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v0.2.0-build-${{ github.run_number }}" build/outputs/apk/debug/*.apk \
-            --target "$GITHUB_SHA" --title "PhoneCam LAN test build ${{ github.run_number }}" \
-            --notes "Front and rear camera selection. Stop the stream, select a camera, then start again; the OBS URL stays the same. Front camera is the default. If Android rejects the update due to signing, uninstall the previous test APK first and copy the new URL into OBS." --prerelease
+          gh release create "v0.3.0-build-${{ github.run_number }}" dist/* \
+            --target "$GITHUB_SHA" --title "PhoneCam LAN 0.3.0 — Android 10–17" \
+            --notes-file RELEASE_NOTES.md --latest
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: Android-lint-report
-          path: build/reports/lint-results-debug.html
+          path: build/reports/lint-results-release.html
